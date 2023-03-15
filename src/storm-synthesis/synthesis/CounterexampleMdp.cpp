@@ -1,4 +1,4 @@
-// author: Roman Andriushchenko
+// authors: Roman Andriushchenko
 
 #include "storm-synthesis/synthesis/CounterexampleMdp.h"
 
@@ -73,7 +73,7 @@ namespace storm {
             uint_fast64_t hole_count,
             std::vector<std::set<uint_fast64_t>> const& quotient_holes,
             std::vector<std::shared_ptr<storm::logic::Formula const>> const& formulae
-            ) : quotient_mdp(quotient_mdp), hole_count(hole_count), quotient_holes(quotient_holes), formula_original(formulae) {
+            ) : quotient_mdp(quotient_mdp), hole_count(hole_count), quotient_holes(quotient_holes) {
 
             // create label formulae for our own labels
             std::shared_ptr<storm::logic::Formula const> const& target_label_formula = std::make_shared<storm::logic::AtomicLabelFormula>(this->target_label);
@@ -121,7 +121,7 @@ namespace storm {
                     storm::logic::EventuallyFormula const& ef = osf.asEventuallyFormula();
 
                     this->mdp_untils.push_back(NULL);
-                    
+
                     auto mdp_target = this->labelStates(this->quotient_mdp,ef.getSubformula());
                     // std::cout << (*mdp_target).getTruthValuesVector() << std::endl;
                     this->mdp_targets.push_back(mdp_target);
@@ -146,54 +146,44 @@ namespace storm {
         void CounterexampleGeneratorMdp<ValueType,StateType>::prepareMdp(
             storm::models::sparse::Mdp<ValueType> const& mdp,
             std::vector<uint_fast64_t> const& state_map,
-            std::set<uint_fast64_t> initial_expand
+            storm::storage::BitVector initial_expand
             ) {
 
-            // Clear up previous MDP metadata
+            // Get MDP info
+            this->mdp = std::make_shared<storm::models::sparse::Mdp<ValueType>>(mdp);
+            this->state_map = state_map;
+            uint_fast64_t mdp_states = this->mdp->getNumberOfStates();
+            StateType initial_state = *(this->mdp->getInitialStates().begin());
+
+            // Clear up previous MDP exploration metadata
             while(!this->state_horizon.empty()) {
                 this->state_horizon.pop();
             }
             this->hole_wave.clear();
             this->wave_states.clear();
             this->state_horizon_blocking.clear();
-            this->mdp_holes.clear();
-            this->unregistered_holes_count.clear();
+            this->unregistered_holes_count = std::vector<size_t>(mdp_states);
+            this->mdp_holes = std::vector<std::set<uint_fast64_t>>(mdp_states);
             this->current_wave = 0;
+            this->reachable_flag = storm::storage::BitVector(mdp_states, false);
+            this->blocking_candidate_set = false;
 
-            // Get MDP info
-            this->mdp = std::make_shared<storm::models::sparse::Mdp<ValueType>>(mdp);
-            this->state_map = state_map;
 
-            // Mark all simple holes registered and all non simple holes unregistered
+            // Mark all simple holes registered and rest unregistered
             for(uint_fast64_t index = 0; index < this->hole_count; index++) {
-                if(initial_expand.find(index) != initial_expand.end()) {
-                    this->hole_wave.push_back(1);
-                } else {
-                    this->hole_wave.push_back(0);
-                }
+                this->hole_wave.push_back(initial_expand[index] ? 1 : 0);
             }
 
-            uint_fast64_t mdp_states = this->mdp->getNumberOfStates();
-            StateType initial_state = *(this->mdp->getInitialStates().begin());
-
-            // Associate states of a DTMC with relevant holes and store their count
-            this->mdp_holes.resize(mdp_states);
-            this->unregistered_holes_count.resize(mdp_states);
+            // Associate states of a MDP with relevant holes and store their count
             for(StateType state = 0; state < mdp_states; state++) {
                 this->mdp_holes[state] = this->quotient_holes[state_map[state]];
                 for(uint_fast64_t hole : this->mdp_holes[state]) {
+                    // Hole is unregistered
                     if(this->hole_wave[hole] == 0) {
                         unregistered_holes_count[state]++;
                     }
                 }
             }
-
-            this->reachable_flag.resize(mdp_states);
-            for(StateType state = 0; state < mdp_states; state++) {
-                this->reachable_flag.set(state, false);
-            }
-
-            this->blocking_candidate_set = false;
 
             // Round 0: encounter initial state first (important)
             this->wave_states.push_back(std::vector<StateType>());
@@ -213,6 +203,7 @@ namespace storm {
         bool CounterexampleGeneratorMdp<ValueType,StateType>::exploreWave () {
 
             storm::storage::SparseMatrix<ValueType> const& transition_matrix = this->mdp->getTransitionMatrix();
+            std::vector<size_t> row_group_indices = transition_matrix.getRowGroupIndices();
             uint_fast64_t mdp_states = this->mdp->getNumberOfStates();
 
             // Expand the non-blocking horizon
@@ -222,24 +213,27 @@ namespace storm {
                 this->wave_states.back().push_back(state);
 
                 // Reach successors
-                for(auto entry: transition_matrix.getRow(state)) {
-                    StateType successor = entry.getColumn();
-                    if(reachable_flag[successor]) {
-                        // already reached
-                        continue;
-                    }
-                    // new state reached
-                    reachable_flag.set(successor);
-                    if(unregistered_holes_count[successor] == 0) {
-                        // non-blocking
-                        state_horizon.push(successor);
-                    } else {
-                        // blocking
-                        state_horizon_blocking.push_back(successor);
-                        if(!blocking_candidate_set || unregistered_holes_count[successor] < unregistered_holes_count[blocking_candidate]) {
-                            // new blocking candidate
-                            blocking_candidate_set = true;
-                            blocking_candidate = successor;
+                for(uint_fast64_t row_index = row_group_indices[state]; row_index < row_group_indices[state+1]; row_index++) {
+                    for(auto entry : transition_matrix.getRow(row_index)) {
+                        // TODO CHECK
+                        StateType successor = entry.getColumn();
+                        if(reachable_flag[successor]) {
+                            // already reached
+                            continue;
+                        }
+                        // new state reached
+                        reachable_flag.set(successor);
+                        if(unregistered_holes_count[successor] == 0) {
+                            // non-blocking
+                            state_horizon.push(successor);
+                        } else {
+                            // blocking
+                            state_horizon_blocking.push_back(successor);
+                            if(!blocking_candidate_set || unregistered_holes_count[successor] < unregistered_holes_count[blocking_candidate]) {
+                                // new blocking candidate
+                                blocking_candidate_set = true;
+                                blocking_candidate = successor;
+                            }
                         }
                     }
                 }
@@ -302,13 +296,14 @@ namespace storm {
             uint_fast64_t formula_index,
             std::shared_ptr<storm::modelchecker::ExplicitQuantitativeCheckResult<ValueType> const> mdp_bounds,
             std::vector<StateType> const& mdp_quotient_state_map,
-            std::vector<std::vector<std::pair<StateType,ValueType>>> & matrix_submdp,
+            std::vector<std::vector<StormRow>> & matrix_submdp,
             storm::models::sparse::StateLabeling & labeling_submdp,
             std::unordered_map<std::string,storm::models::sparse::StandardRewardModel<ValueType>> & reward_models_submdp
             ) {
 
-            // Get DTMC info
+            // Get MDP info
             StateType mdp_states = mdp->getNumberOfStates();
+            storm::storage::SparseMatrix<ValueType> const& transition_matrix = this->mdp->getTransitionMatrix();
 
             // Introduce expanded state space
             uint_fast64_t sink_state_false = mdp_states;
@@ -343,42 +338,58 @@ namespace storm {
                 }
             }
 
-            // Construct transition matrix (as well as the reward model) for the subdtmc
+            // Construct transition matrix (as well as the reward model) for the submdp
             if(!this->formula_reward[formula_index]) {
                 // Probability formula: no reward models
                 double default_bound = this->formula_safety[formula_index] ? 0 : 1;
                 for(StateType state = 0; state < mdp_states; state++) {
+                    // matrix_submdp.push_back(std::vector<StormRow>());
                     StateType mdp_state = this->state_map[state];
-                    std::vector<std::pair<StateType,ValueType>> r;
-                    double probability = have_bounds ? quotient_mdp_bounds[mdp_state] : default_bound;
-                    r.emplace_back(sink_state_false, 1-probability);
-                    r.emplace_back(sink_state_true, probability);
-                    matrix_submdp.push_back(r);
+
+                    uint_fast64_t state_actions = transition_matrix.getRowGroupSize(state);
+                    for(uint_fast64_t action = 0; action < state_actions; action++) {
+                        StormRow r;
+                        double probability = have_bounds ? quotient_mdp_bounds[mdp_state] : default_bound;
+                        r.emplace_back(sink_state_false, 1-probability);
+                        r.emplace_back(sink_state_true, probability);
+                        matrix_submdp[state].push_back(r);
+                    }
                 }
             } else {
                 // Reward formula: one reward model
                 assert(mdp->hasRewardModel(this->formula_reward_name[formula_index]));
 
                 std::vector<ValueType> state_rewards_submdp(mdp_states+2);
+                std::vector<ValueType> state_action_rewards_submdp(transition_matrix.getRowCount()+2);
                 double default_reward = 0;
+                uint_fast64_t row_index = 0;
                 for(StateType state = 0; state < mdp_states; state++) {
                     StateType mdp_state = this->state_map[state];
+                    // matrix_submdp.push_back(std::vector<StormRow>());
+                    // FIXME - quotient_mdp_bounds
                     double reward = have_bounds ? quotient_mdp_bounds[mdp_state] : default_reward;
                     state_rewards_submdp[state] = reward;
 
-                    std::vector<std::pair<StateType,ValueType>> r;
-                    r.emplace_back(sink_state_true, 1);
-                    matrix_submdp.push_back(r);
+                    uint_fast64_t state_actions = transition_matrix.getRowGroupSize(state);
+                    for(uint_fast64_t action = 0; action < state_actions; action++) {
+                        state_action_rewards_submdp[row_index] = default_reward;
+                        row_index++;
+                        StormRow r;
+                        r.emplace_back(sink_state_true, 1);
+                        matrix_submdp[state].push_back(r);
+                    }
+
+
                 }
-                storm::models::sparse::StandardRewardModel<ValueType> reward_model_submdp(state_rewards_submdp, boost::none, boost::none);
+                storm::models::sparse::StandardRewardModel<ValueType> reward_model_submdp(state_rewards_submdp, state_action_rewards_submdp, boost::none);
                 reward_models_submdp.emplace(this->formula_reward_name[formula_index], reward_model_submdp);
             }
 
             // Add self-loops to sink states
             for(StateType state = sink_state_false; state <= sink_state_true; state++) {
-                std::vector<std::pair<StateType,ValueType>> r;
+                StormRow r;
                 r.emplace_back(state, 1);
-                matrix_submdp.push_back(r);
+                matrix_submdp[state].push_back(r);
             }
         }
 
@@ -387,12 +398,13 @@ namespace storm {
         std::pair<bool,bool> CounterexampleGeneratorMdp<ValueType,StateType>::expandAndCheck (
             uint_fast64_t formula_index,
             ValueType formula_bound,
-            std::vector<std::vector<std::pair<StateType,ValueType>>> & matrix_submdp,
+            // std::vector<std::vector<std::pair<StateType,ValueType>>> & matrix_submdp,
+            std::vector<std::vector<StormRow>> & matrix_submdp,
             storm::models::sparse::StateLabeling const& labeling_submdp,
             std::unordered_map<std::string,storm::models::sparse::StandardRewardModel<ValueType>> & reward_models_submdp
         ) {
             // result.first - wave exploration finish status
-            // result second - formula satisfied
+            // result.second - formula satisfied
             std::pair<bool,bool> result(false, true);
 
             // explore one wave
@@ -408,47 +420,57 @@ namespace storm {
             // Get MDP info
             uint_fast64_t mdp_states = this->mdp->getNumberOfStates();
             storm::storage::SparseMatrix<ValueType> const& transition_matrix = this->mdp->getTransitionMatrix();
+            std::vector<size_t> row_group_indices = transition_matrix.getRowGroupIndices();
             StateType initial_state = *(this->mdp->getInitialStates().begin());
             std::vector<StateType> to_expand = this->wave_states[current_wave-1];
             // Expand states from the new wave:
             // - expand transition probabilities
             for(StateType state : to_expand) {
                 matrix_submdp[state].clear();
-                for(auto entry: transition_matrix.getRow(state)) {
-                    matrix_submdp[state].emplace_back(entry.getColumn(), entry.getValue());
+
+                for(uint_fast64_t row_index = row_group_indices[state]; row_index < row_group_indices[state+1]; row_index++) {
+                    StormRow r;
+                    for(auto entry : transition_matrix.getRow(row_index)) {
+                        r.emplace_back(entry.getColumn(), entry.getValue());
+                    }
+                    matrix_submdp[state].push_back(r);
                 }
             }
 
             if(this->formula_reward[formula_index]) {
                 // - expand state rewards
                 storm::models::sparse::StandardRewardModel<ValueType> const& reward_model_mdp = mdp->getRewardModel(this->formula_reward_name[formula_index]);
-                assert(reward_model_mdp.hasStateRewards() or reward_model_mdp.hasStateActionRewards());
+                assert(reward_model_mdp.hasStateActionRewards());
                 storm::models::sparse::StandardRewardModel<ValueType> & reward_model_submdp = (reward_models_submdp.find(this->formula_reward_name[formula_index]))->second;
+
                 for(StateType state : to_expand) {
-                    ValueType reward;
-                    if(reward_model_mdp.hasStateRewards()) {
-                        reward = reward_model_mdp.getStateReward(state);
-                    } else {
-                        reward = reward_model_mdp.getStateActionReward(state);
+                    for(uint_fast64_t row_index = row_group_indices[state]; row_index < row_group_indices[state+1]; row_index++) {
+                        ValueType reward = reward_model_mdp.getStateActionReward(row_index);
+                        reward_model_submdp.setStateActionReward(row_index, reward);
                     }
-                    reward_model_submdp.setStateReward(state, reward);
                 }
             }
 
             // Construct sub-MDP
-            storm::storage::SparseMatrixBuilder<ValueType> transitionMatrixBuilder(0, 0, 0, false, false, 0);
+            storm::storage::SparseMatrixBuilder<ValueType> transitionMatrixBuilder(0, 0, 0, false, true, row_group_indices.size());
+            uint_fast64_t row_index = 0;
             for(StateType state = 0; state < mdp_states+2; state++) {
-                for(auto row_entry: matrix_submdp[state]) {
-                    transitionMatrixBuilder.addNextValue(state, row_entry.first, row_entry.second);
+                transitionMatrixBuilder.newRowGroup(row_index);
+                for(auto row: matrix_submdp[state]) {
+                    for(auto row_entry: row) {
+                        transitionMatrixBuilder.addNextValue(row_index, row_entry.first, row_entry.second);
+                    }
+                    row_index++;
                 }
             }
             storm::storage::SparseMatrix<ValueType> sub_matrix = transitionMatrixBuilder.build();
+            // std::cout << sub_matrix << std::endl;
             assert(sub_matrix.isProbabilistic());
             storm::storage::sparse::ModelComponents<ValueType> components(sub_matrix, labeling_submdp, reward_models_submdp);
             std::shared_ptr<storm::models::sparse::Model<ValueType>> submdp = storm::utility::builder::buildModelFromComponents(storm::models::ModelType::Mdp, std::move(components));
-            // std::cout << "[storm] sub-dtmc has " << subdtmc->getNumberOfStates() << " states" << std::endl;
+            // std::cout << "[storm] sub-mdp has " << submdp->getNumberOfStates() << " states" << std::endl;
 
-            
+
             // Construct MC task
             bool onlyInitialStatesRelevant = false;
             storm::modelchecker::CheckTask<storm::logic::Formula, ValueType> task(*(this->formula_modified[formula_index]), onlyInitialStatesRelevant);
@@ -466,7 +488,7 @@ namespace storm {
 
 
             // Model check
-            // std::unique_ptr<storm::modelchecker::CheckResult> result_ptr = storm::api::verifyWithSparseEngine<ValueType>(subdtmc, task);
+            // std::unique_ptr<storm::modelchecker::CheckResult> result_ptr = storm::api::verifyWithSparseEngine<ValueType>(submdp, task);
             // storm::modelchecker::ExplicitQuantitativeCheckResult<ValueType>& result = result_ptr->asExplicitQuantitativeCheckResult<ValueType>();
             this->timer_model_check.start();
             this->hint_result = storm::api::verifyWithSparseEngine<ValueType>(env, submdp, task);
@@ -479,7 +501,7 @@ namespace storm {
                 satisfied = model_check_result[initial_state] > formula_bound;
             }
             result.second = satisfied;
-            
+
             return result;
         }
 
@@ -489,7 +511,7 @@ namespace storm {
         std::vector<uint_fast64_t> CounterexampleGeneratorMdp<ValueType,StateType>::constructConflict (
             uint_fast64_t formula_index,
             ValueType formula_bound,
-            std::set<uint_fast64_t> simple_holes,
+            storm::storage::BitVector simple_holes,
             // TODO: revise rest of the args
             std::shared_ptr<storm::modelchecker::ExplicitQuantitativeCheckResult<ValueType> const> mdp_bounds, // placeholders for Hybrid
             std::vector<StateType> const& mdp_quotient_state_map // maybe not needed as we don't need to quotient MDP
@@ -498,12 +520,26 @@ namespace storm {
             StateType mdp_states = this->mdp->getNumberOfStates();
 
             // Prepare to construct sub-MDPs
-            std::vector<std::vector<std::pair<StateType,ValueType>>> matrix_submdp;
+            std::vector<std::vector<StormRow>> matrix_submdp(mdp_states+2);
             storm::models::sparse::StateLabeling labeling_submdp(mdp_states+2);
             std::unordered_map<std::string, storm::models::sparse::StandardRewardModel<ValueType>> reward_models_submdp;
             this->prepareSubmdp(
                 formula_index, mdp_bounds, mdp_quotient_state_map, matrix_submdp, labeling_submdp, reward_models_submdp
             );
+
+            // debug submdp matrix
+            // std::cout << mdp_states << std::endl;
+            // for(uint_fast64_t state = 0; state < matrix_submdp.size(); state++) {
+            //     std::cout << "state " << state << ":" << std::endl;
+
+            //     for(auto row : matrix_submdp[state]) {
+            //         std::cout << "[ ";
+            //         for(auto state_value_pair : row) {
+            //             std::cout << state_value_pair.first << ":" << state_value_pair.second << " ";
+            //         }
+            //         std::cout << " ]" << std::endl;
+            //     }
+            // }
 
             while(true) {
                 std::pair<bool,bool> result = this->expandAndCheck(
@@ -521,8 +557,7 @@ namespace storm {
             std::vector<uint_fast64_t> critical_holes;
             for(uint_fast64_t hole = 0; hole < this->hole_count; hole++) {
                 uint_fast64_t wave_registered = this->hole_wave[hole];
-                bool is_simple_hole = simple_holes.find(hole) != simple_holes.end();
-                if(wave_registered > 0 && wave_registered <= current_wave && !is_simple_hole) {
+                if(wave_registered > 0 && wave_registered <= current_wave && !simple_holes[hole]) {
                     critical_holes.push_back(hole);
                 }
             }

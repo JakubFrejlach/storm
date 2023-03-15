@@ -17,6 +17,9 @@ namespace storm {
 
         template<typename ValueType = double, typename StateType = uint_fast64_t>
         class CounterexampleGeneratorMdp {
+
+        using StormRow = std::vector<std::pair<StateType, ValueType>>;
+
         public:
 
             /*!
@@ -46,19 +49,20 @@ namespace storm {
              * - rinse and repeat
              * @param dtmc A deterministic MDP (DTMC).
              * @param state_map DTMC-MDP state mapping.
-             
+
              */
             void prepareMdp(
                 storm::models::sparse::Mdp<ValueType> const& Mdp,
                 std::vector<uint_fast64_t> const& state_map,
-                std::set<uint_fast64_t> initial_expand
+                // std::set<uint_fast64_t> initial_expand
+                storm::storage::BitVector initial_expand
                 );
 
             /*!
              * TODO
              */
             bool exploreWave ();
-            
+
             /*!
              * Construct a counterexample to a prepared DTMC and a formula with
              * the given index.
@@ -71,7 +75,7 @@ namespace storm {
             std::vector<uint_fast64_t> constructConflict(
                 uint_fast64_t formula_index,
                 ValueType formula_bound,
-                std::set<uint_fast64_t> simple_holes,
+                storm::storage::BitVector simple_holes,
                 std::shared_ptr<storm::modelchecker::ExplicitQuantitativeCheckResult<ValueType> const> mdp_bounds,
                 std::vector<StateType> const& mdp_quotient_state_map
                 );
@@ -104,7 +108,7 @@ namespace storm {
                 uint_fast64_t formula_index,
                 std::shared_ptr<storm::modelchecker::ExplicitQuantitativeCheckResult<ValueType> const> mdp_bounds,
                 std::vector<StateType> const& mdp_quotient_state_map,
-                std::vector<std::vector<std::pair<StateType,ValueType>>> & matrix_subdtmc,
+                std::vector<std::vector<StormRow>> & matrix_subdtmc,
                 storm::models::sparse::StateLabeling & labeling_subdtmc,
                 std::unordered_map<std::string,storm::models::sparse::StandardRewardModel<ValueType>> & reward_models_subdtmc
                 );
@@ -122,7 +126,8 @@ namespace storm {
             std::pair<bool,bool> expandAndCheck(
                 uint_fast64_t formula_index,
                 ValueType formula_bound,
-                std::vector<std::vector<std::pair<StateType,ValueType>>> & matrix_submdp,
+                // std::vector<std::vector<std::pair<StateType,ValueType>>> & matrix_submdp,
+                std::vector<std::vector<StormRow>> & matrix_submdp,
                 storm::models::sparse::StateLabeling const& labeling_submdp,
                 std::unordered_map<std::string,storm::models::sparse::StandardRewardModel<ValueType>> & reward_models_submdp
                 );
@@ -133,10 +138,7 @@ namespace storm {
             uint_fast64_t hole_count;
             // Significant holes in Quotient states
             std::vector<std::set<uint_fast64_t>> quotient_holes;
-            // Simple (trivial) holes
-            std::set<uint_fast64_t> simple_holes;
-            // Non simple holes
-            std::set<uint_fast64_t> non_simple_holes;
+            
 
             // Formula bounds: safety (<,<=) or liveness (>,>=)
             std::vector<bool> formula_safety;
@@ -144,13 +146,11 @@ namespace storm {
             std::vector<bool> formula_reward;
             // Reward model names for reward formulae
             std::vector<std::string> formula_reward_name;
-            
+
             // Until label for sub-dtmcs
             const std::string until_label = "__until__";
             // Target label for sub-dtmcs
             const std::string target_label = "__target__";
-            // Original operator formulae
-            std::vector<std::shared_ptr<storm::logic::Formula const>> formula_original;
             // Modified operator formulae to apply to sub-dtmcs: P~?["__until" U "__target__"] or P~?[F "__target__"]
             std::vector<std::shared_ptr<storm::logic::Formula>> formula_modified;
             // Flags for until states
@@ -161,7 +161,7 @@ namespace storm {
             // MDP under investigation
             std::shared_ptr<storm::models::sparse::Mdp<ValueType>> mdp;
             // std::shared_ptr<storm::models::sparse::Dtmc<ValueType>> dtmc;
-            // DTMC to MDP state mapping
+            // MDP to quotient MDP state mapping
             std::vector<uint_fast64_t> state_map;
             // For each hole, a wave when it was registered (0 = unregistered).
             std::vector<uint_fast64_t> hole_wave;
