@@ -346,6 +346,7 @@ namespace storm {
                     // matrix_submdp.push_back(std::vector<StormRow>());
                     StateType mdp_state = this->state_map[state];
 
+                    // FIXME later? - multiple same actions
                     uint_fast64_t state_actions = transition_matrix.getRowGroupSize(state);
                     for(uint_fast64_t action = 0; action < state_actions; action++) {
                         StormRow r;
@@ -368,11 +369,12 @@ namespace storm {
                     // matrix_submdp.push_back(std::vector<StormRow>());
                     // FIXME - quotient_mdp_bounds
                     double reward = have_bounds ? quotient_mdp_bounds[mdp_state] : default_reward;
-                    state_rewards_submdp[state] = reward;
+                    state_rewards_submdp[state] = reward; // FIXME - remove
 
+                    // FIXME later? - multiple same actions
                     uint_fast64_t state_actions = transition_matrix.getRowGroupSize(state);
                     for(uint_fast64_t action = 0; action < state_actions; action++) {
-                        state_action_rewards_submdp[row_index] = default_reward;
+                        state_action_rewards_submdp[row_index] = reward;
                         row_index++;
                         StormRow r;
                         r.emplace_back(sink_state_true, 1);
@@ -407,7 +409,8 @@ namespace storm {
             // result.second - formula satisfied
             std::pair<bool,bool> result(false, true);
 
-            // explore one wave
+            // explore one row_indexrow_index
+            // FIXME later? - we don't need to explore last wave
             bool fully_explored = exploreWave();
             result.first = fully_explored;
 
