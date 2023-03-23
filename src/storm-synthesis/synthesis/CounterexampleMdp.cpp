@@ -360,7 +360,6 @@ namespace storm {
                 // Reward formula: one reward model
                 assert(mdp->hasRewardModel(this->formula_reward_name[formula_index]));
 
-                std::vector<ValueType> state_rewards_submdp(mdp_states+2);
                 std::vector<ValueType> state_action_rewards_submdp(transition_matrix.getRowCount()+2);
                 double default_reward = 0;
                 uint_fast64_t row_index = 0;
@@ -369,7 +368,6 @@ namespace storm {
                     // matrix_submdp.push_back(std::vector<StormRow>());
                     // FIXME - quotient_mdp_bounds
                     double reward = have_bounds ? quotient_mdp_bounds[mdp_state] : default_reward;
-                    state_rewards_submdp[state] = reward; // FIXME - remove
 
                     // FIXME later? - multiple same actions
                     uint_fast64_t state_actions = transition_matrix.getRowGroupSize(state);
@@ -383,7 +381,7 @@ namespace storm {
 
 
                 }
-                storm::models::sparse::StandardRewardModel<ValueType> reward_model_submdp(state_rewards_submdp, state_action_rewards_submdp, boost::none);
+                storm::models::sparse::StandardRewardModel<ValueType> reward_model_submdp(boost::none, state_action_rewards_submdp, boost::none);
                 reward_models_submdp.emplace(this->formula_reward_name[formula_index], reward_model_submdp);
             }
 
@@ -500,8 +498,10 @@ namespace storm {
             bool satisfied;
             if(this->formula_safety[formula_index]) {
                 satisfied = model_check_result[initial_state] < formula_bound;
+                // std::cout << model_check_result[initial_state] << " < " << formula_bound << std::endl;
             } else {
                 satisfied = model_check_result[initial_state] > formula_bound;
+                // std::cout << model_check_result[initial_state] << " > " << formula_bound << std::endl;
             }
             result.second = satisfied;
 
@@ -548,8 +548,8 @@ namespace storm {
                 std::pair<bool,bool> result = this->expandAndCheck(
                     formula_index, formula_bound, matrix_submdp, labeling_submdp, reward_models_submdp
                 );
-                bool satisfied = result.first;
-                bool last_wave = result.second;
+                bool last_wave = result.first;
+                bool satisfied = result.second;
 
                 if(!satisfied || last_wave) {
                     break;
